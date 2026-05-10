@@ -109,6 +109,29 @@ def make_nb_url(nb_path: str) -> str:
     return f"/lab/tree/{nb_path}"
 
 
+# ── Survey capability detection ──────────────────────────────────────────────
+
+def detect_capabilities(params: dict) -> dict:
+    """
+    Return {'has_images': bool, 'has_netvis': bool} for this survey.
+
+    has_images: DZC URL is set (survey has deep-zoom images).
+    has_netvis: at least one column is annotated #netvis.
+    """
+    has_images = bool(params.get('dzc'))
+    has_netvis = False
+    try:
+        from urllib.parse import urlparse
+        import io as _io
+        origin = urlparse(params.get('surveyurl', ''))
+        host   = f"{origin.scheme}://{origin.netloc}"
+        hdr    = pd.read_csv(f"{host}/surveys/{params['csv']}", nrows=0)
+        has_netvis = any('#netvis' in c.lower() for c in hdr.columns)
+    except Exception:
+        pass
+    return {'has_images': has_images, 'has_netvis': has_netvis}
+
+
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 def fetch_survey_csv(params: dict) -> pd.DataFrame:
