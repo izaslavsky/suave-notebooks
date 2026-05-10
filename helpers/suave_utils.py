@@ -113,17 +113,23 @@ def make_nb_url(nb_path: str) -> str:
 
 def detect_capabilities(params: dict) -> dict:
     """
-    Return survey capabilities by querying GET /getSurvey on the SuAVE server.
+    Return survey capabilities by querying GET /getSurvey and checking local NFS paths.
 
     Keys returned:
-      has_images  — survey has a DZC deep-zoom collection
-      has_netvis  — survey has network visualization data files
-      views       — list of enabled view names from the survey record
+      has_images       — full-size images exist on NFS storage
+      has_netvis       — survey has network visualization data files
+      has_largedataset — /lib-nfs/largedatasets is accessible (e.g. SDG)
+      views            — list of enabled view names from the survey record
+      localdzc         — NFS path to the .dzc file (empty string if unavailable)
+      full_images      — NFS path to the full_images/ directory (empty if unavailable)
     """
+    import os, re
     from urllib.parse import urlparse
-    has_images = bool(params.get('dzc'))
-    has_netvis = False
+
+    dzc        = params.get('dzc', '')
     views      = []
+    has_netvis = False
+
     try:
         origin = urlparse(params.get('surveyurl', ''))
         host   = f"{origin.scheme}://{origin.netloc}"
@@ -134,12 +140,34 @@ def detect_capabilities(params: dict) -> dict:
         )
         if resp.status_code == 200:
             rec        = resp.json()
-            has_images = bool(rec.get('dzc') or has_images)
+            dzc        = rec.get('dzc') or dzc
             has_netvis = len(rec.get('netvis', [])) > 0
             views      = rec.get('views', [])
     except Exception:
         pass
-    return {'has_images': has_images, 'has_netvis': has_netvis, 'views': views}
+
+    # Full-size images require an NFS-mounted path derived from the DZC URL.
+    # Pattern: .../dzgen/lib-staging-uploads/<hash>/content.dzc
+    #          → /lib-nfs/dzgen/<hash>/content.dzc
+    #          → /lib-nfs/dzgen/<hash>/full_images/
+    localdzc    = ''
+    full_images = ''
+    has_images  = False
+    if dzc and len(dzc) > 20:
+        m = re.search(r'/dzgen/lib-staging-uploads/(.+)', dzc)
+        if m:
+            localdzc    = f"/lib-nfs/dzgen/{m.group(1)}"
+            full_images = localdzc.replace('/content.dzc', '/full_images/')
+            has_images  = os.path.isfile(localdzc) and os.path.isdir(full_images)
+
+    return {
+        'has_images':       has_images,
+        'has_netvis':       has_netvis,
+        'has_largedataset': os.path.isdir('/lib-nfs/largedatasets'),
+        'views':            views,
+        'localdzc':         localdzc,
+        'full_images':      full_images,
+    }
 
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
