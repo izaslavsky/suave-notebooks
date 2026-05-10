@@ -113,23 +113,33 @@ def make_nb_url(nb_path: str) -> str:
 
 def detect_capabilities(params: dict) -> dict:
     """
-    Return {'has_images': bool, 'has_netvis': bool} for this survey.
+    Return survey capabilities by querying GET /getSurvey on the SuAVE server.
 
-    has_images: DZC URL is set (survey has deep-zoom images).
-    has_netvis: at least one column is annotated #netvis.
+    Keys returned:
+      has_images  — survey has a DZC deep-zoom collection
+      has_netvis  — survey has network visualization data files
+      views       — list of enabled view names from the survey record
     """
+    from urllib.parse import urlparse
     has_images = bool(params.get('dzc'))
     has_netvis = False
+    views      = []
     try:
-        from urllib.parse import urlparse
-        import io as _io
         origin = urlparse(params.get('surveyurl', ''))
         host   = f"{origin.scheme}://{origin.netloc}"
-        hdr    = pd.read_csv(f"{host}/surveys/{params['csv']}", nrows=0)
-        has_netvis = any('#netvis' in c.lower() for c in hdr.columns)
+        resp   = requests.get(
+            f"{host}/getSurvey",
+            params={'name': params.get('survey', ''), 'user': params.get('user', '')},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            rec        = resp.json()
+            has_images = bool(rec.get('dzc') or has_images)
+            has_netvis = len(rec.get('netvis', [])) > 0
+            views      = rec.get('views', [])
     except Exception:
         pass
-    return {'has_images': has_images, 'has_netvis': has_netvis}
+    return {'has_images': has_images, 'has_netvis': has_netvis, 'views': views}
 
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
