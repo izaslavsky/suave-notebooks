@@ -1,0 +1,4 @@
+#!/bin/bash
+# Start the SuAVE parameter receiver in the background before JupyterLab opens.
+python /home/jovyan/suave/receiver.py &
+exec "$@"
