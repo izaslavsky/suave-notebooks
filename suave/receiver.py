@@ -6,12 +6,18 @@ Binder opens:  proxy/8765/receive?token=XXX&host=https://suave.server&nb=SuAVEDi
 This Flask app:
   1. Calls GET {host}/api/sessions/{token} to fetch the session params
   2. Writes them to ~/suave_params.json  (all notebooks in this session read from here)
-  3. Redirects the browser to SuAVEDispatch.ipynb (or whatever nb= says)
+  3. Returns an HTML page that redirects the browser to SuAVEDispatch.ipynb
+
+Note: we use a client-side JS redirect instead of Flask's redirect() because
+jupyter-server-proxy rewrites the Location header on HTTP 302 responses,
+prepending the proxy path and producing a doubled URL like
+  /user/.../proxy/8765/user/.../lab/tree/...
+A JS redirect bypasses the proxy layer entirely.
 """
 
 import json, pathlib, os
 import requests
-from flask import Flask, request, redirect, Response
+from flask import Flask, request, Response
 
 app = Flask(__name__)
 
@@ -37,7 +43,18 @@ def receive():
     PARAMS_FILE.write_text(json.dumps(params, indent=2))
 
     base = os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "/")
-    return redirect(f"{base}lab/tree/{nb}")
+    nb_url = f"{base}lab/tree/{nb}"
+
+    return Response(
+        f'<!doctype html><html><head>'
+        f'<meta http-equiv="refresh" content="0;url={nb_url}">'
+        f'</head><body>'
+        f'<script>window.location.replace("{nb_url}");</script>'
+        f'<p>Opening notebook… <a href="{nb_url}">click here</a> if not redirected.</p>'
+        f'</body></html>',
+        status=200,
+        headers={"Content-Type": "text/html"},
+    )
 
 
 if __name__ == "__main__":
