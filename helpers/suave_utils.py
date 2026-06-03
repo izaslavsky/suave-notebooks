@@ -170,6 +170,26 @@ def detect_capabilities(params: dict) -> dict:
     }
 
 
+# ── HuggingFace helpers ──────────────────────────────────────────────────────
+
+def get_hf_client(token: str = ""):
+    """
+    Return a HuggingFace InferenceClient.
+    Token priority: argument → HF_TOKEN env var → unauthenticated (rate-limited).
+    Get a free token at https://huggingface.co/settings/tokens
+    """
+    from huggingface_hub import InferenceClient
+    tok = token or os.environ.get("HF_TOKEN", "")
+    return InferenceClient(token=tok or None)
+
+
+def batch_apply(series, fn, desc="Processing"):
+    """Apply fn(value) to each element of a pandas Series with a tqdm progress bar."""
+    from tqdm.auto import tqdm
+    tqdm.pandas(desc=desc)
+    return series.progress_apply(fn)
+
+
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 def fetch_survey_csv(params: dict) -> pd.DataFrame:
