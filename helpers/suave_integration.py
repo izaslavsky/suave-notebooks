@@ -9,9 +9,13 @@ def printmd(string):
 
 def create_survey(survey_url,new_file, survey_name, dzc_file, user, csv_file, view, views, iflocal="Load survey file from SuAVE"):
 
-    referer = survey_url.split("/main")[0] +"/"
-    upload_url = referer + "uploadCSV"
-    new_survey_url_base = survey_url.split(user)[0]
+    # Extract the server origin robustly — the old split("/main") breaks when
+    # the 2026 URL has no /main path component.
+    _parsed = urlparse(survey_url)
+    _origin = f"{_parsed.scheme}://{_parsed.netloc}"
+    referer = _origin + "/"
+    upload_url = _origin + "/uploadCSV"
+    new_survey_url_base = _origin + "/?survey="
 
     csv = {"file": open(new_file, "rb")}
     upload_data = {
