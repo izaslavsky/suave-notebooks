@@ -72,8 +72,8 @@ def create_survey(survey_url,new_file, survey_name, dzc_file, user, csv_file, vi
         print(url)
         printmd("<b><span style='color:red; font-size: 200%;'>Click the URL to open the new survey</span></b>")
     else:
-        printmd("<b><span style='color:red; font-size: 200%;'>Error creating new survey.</span><span style='color:red; font-size: 120%;'> Check if a survey with this name already exists. Make sure you are logged into your SuAVE account.</span></b>")
-        printmd("<b><span style='color:red'>Reason: </span></b>"+ str(r.status_code) + " " + r.reason)
+        printmd("<b><span style='color:red; font-size: 200%;'>Error creating new survey.</span></b>")
+        printmd("<b><span style='color:red'>Reason: </span></b>" + str(r.status_code) + " — " + (r.text.strip() or r.reason))
         
 def save_csv_file(df, absolutePath, csv_file):
     # new filename
