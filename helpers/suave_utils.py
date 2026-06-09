@@ -50,9 +50,17 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         return json.loads(PARAMS_FILE.read_text())
 
     if in_colab() and _DRIVE_PARAMS.exists():
+        display(HTML('<p style="color:green">&#10003; Session parameters loaded from Google Drive.</p>'))
         params = json.loads(_DRIVE_PARAMS.read_text())
         PARAMS_FILE.write_text(json.dumps(params, indent=2))
         return params
+
+    if in_colab() and not (token and host):
+        display(HTML(
+            '<p style="color:#e07000">Google Drive not mounted or no session found there. '
+            'Enter <code>SUAVE_TOKEN</code> and <code>SUAVE_HOST</code> above and re-run.</p>'
+        ))
+        return None
 
     if token and host:
         if not host.startswith(("http://", "https://")):
