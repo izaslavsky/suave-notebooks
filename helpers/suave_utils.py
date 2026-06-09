@@ -31,19 +31,43 @@ def in_binder() -> bool:
 
 # ── Parameter loading ────────────────────────────────────────────────────────
 
+_DRIVE_PARAMS = pathlib.Path("/content/drive/MyDrive/.suave_params.json")
+
+
+def _colab_host_from_secrets() -> str:
+    """Return SUAVE_HOST from Colab Secrets, or '' if unavailable."""
+    try:
+        from google.colab import userdata  # type: ignore
+        return userdata.get("SUAVE_HOST") or ""
+    except Exception:
+        return ""
+
+
 def load_params(token: str = "", host: str = "") -> dict | None:
     """
     Load SuAVE session parameters.
 
     On Binder:  ~/suave_params.json was written by receiver.py before this
                 notebook opened — just reads the file.
-    On Colab:   the dispatcher writes ~/suave_params.json after fetching from
-                the session API; subsequent operation notebooks find it here too.
-    Fallback:   if the file is absent, fetch from SuAVE session API using
-                the supplied token + host.
+    On Colab:   checks (in order):
+                1. ~/suave_params.json — written by the dispatch notebook in
+                   the same runtime, or by a previous call in this runtime.
+                2. Google Drive (.suave_params.json in MyDrive) — written by
+                   the dispatch notebook when Drive was mounted.
+                3. SUAVE_HOST from Colab Secrets (host only; token still
+                   required from the form field).
+    Fallback:   fetch from SuAVE session API using supplied token + host.
     """
     if PARAMS_FILE.exists():
         return json.loads(PARAMS_FILE.read_text())
+
+    if in_colab():
+        if _DRIVE_PARAMS.exists():
+            params = json.loads(_DRIVE_PARAMS.read_text())
+            PARAMS_FILE.write_text(json.dumps(params, indent=2))
+            return params
+        if not host:
+            host = _colab_host_from_secrets()
 
     if token and host:
         if not host.startswith(("http://", "https://")):
@@ -51,16 +75,25 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         resp = requests.get(f"{host}/api/sessions/{token}", timeout=10)
         if resp.status_code == 200:
             params = resp.json()
-            # Stash credentials so show_params can display them for reuse
             params["_token"] = token
             params["_host"]  = host
             PARAMS_FILE.write_text(json.dumps(params, indent=2))
+            _persist_to_drive(params)
             return params
         raise RuntimeError(
             f"SuAVE session API returned {resp.status_code}. "
             "The token may have expired (30-minute TTL). Relaunch from SuAVE."
         )
     return None
+
+
+def _persist_to_drive(params: dict) -> None:
+    """Write params to Google Drive if it is already mounted. Silent on failure."""
+    try:
+        if _DRIVE_PARAMS.parent.exists():
+            _DRIVE_PARAMS.write_text(json.dumps(params, indent=2))
+    except Exception:
+        pass
 
 
 # ── GitHub repo config (needed to build Colab links) ────────────────────────
@@ -254,14 +287,22 @@ def show_params(params: dict):
     token = params.get("_token", "")
     host  = params.get("_host",  "")
     if token and host and in_colab():
+        drive_saved = _DRIVE_PARAMS.exists()
+        drive_note  = (
+            "Saved to Google Drive — operation notebooks will load automatically."
+            if drive_saved else
+            "Mount Google Drive (<code>from google.colab import drive; "
+            "drive.mount('/content/drive')</code>) before running this cell "
+            "to persist credentials across notebooks automatically."
+        )
         display(HTML(
             '<details style="margin-top:6px;font-size:12px">'
             '<summary style="cursor:pointer;color:#888">Session credentials '
-            '(re-use in other notebooks if needed)</summary>'
+            '(needed in each operation notebook unless Drive is mounted)</summary>'
             f'<pre style="margin:6px 0;padding:6px;background:#f5f5f5;border-radius:4px">'
             f'SUAVE_TOKEN = "{token}"\nSUAVE_HOST  = "{host}"</pre>'
-            '<span style="color:#888">Valid 30 min from launch. '
-            'Not needed if you open notebooks from the card links above '
-            '(they share this session).</span>'
+            f'<span style="color:#888">{drive_note}<br>'
+            'To skip entering the host every session, save it to Colab Secrets '
+            '(key icon in the left sidebar) as <code>SUAVE_HOST</code>.</span>'
             '</details>'
         ))
