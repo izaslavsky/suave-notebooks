@@ -5,9 +5,9 @@ Usage in any notebook (Binder or Colab):
     import sys; sys.path.insert(0, 'helpers')
     import suave_utils as su
 
-    params = su.load_params()           # Binder: reads ~/suave_params.json
-                                        # Colab:  reads ~/suave_params.json if
-                                        #         written by dispatcher, else needs token
+    params = su.load_params()           # Binder/JupyterHub: reads ~/suave_params.json
+                                        # Colab: reads Drive or ~/suave_params.json;
+                                        #        falls back to token + host form fields
     df     = su.fetch_survey_csv(params)
     df     = su.apply_filters(df, params['filters'])
 """
@@ -15,54 +15,95 @@ Usage in any notebook (Binder or Colab):
 import json, pathlib, os, sys
 import requests
 import pandas as pd
+from dataclasses import dataclass
 from IPython.display import display, HTML, Markdown
 
-PARAMS_FILE = pathlib.Path.home() / "suave_params.json"
+PARAMS_FILE  = pathlib.Path.home() / "suave_params.json"
+_DRIVE_PARAMS = pathlib.Path("/content/drive/MyDrive/.suave_params.json")
 
 
-# ── Environment detection ────────────────────────────────────────────────────
+# ── Environment ──────────────────────────────────────────────────────────────
 
-def in_colab() -> bool:
-    return "google.colab" in sys.modules
+@dataclass(frozen=True)
+class _Env:
+    colab:      bool
+    binder:     bool
+    jupyterhub: bool
 
-def in_binder() -> bool:
-    return "BINDER_REPO_URL" in os.environ or "BINDER_LAUNCH_HOST" in os.environ
+    @property
+    def local(self) -> bool:
+        return not (self.colab or self.binder or self.jupyterhub)
+
+    def __str__(self) -> str:
+        if self.colab:      return "Colab"
+        if self.binder:     return "Binder"
+        if self.jupyterhub: return "JupyterHub"
+        return "local Jupyter"
+
+
+ENV = _Env(
+    colab      = "google.colab" in sys.modules,
+    binder     = bool(os.environ.get("BINDER_REPO_URL") or os.environ.get("BINDER_LAUNCH_HOST")),
+    jupyterhub = "JUPYTERHUB_SERVICE_PREFIX" in os.environ,
+)
+
+# Backward-compatible aliases
+def in_colab()  -> bool: return ENV.colab
+def in_binder() -> bool: return ENV.binder
+
+
+def require_env(*envs: str) -> None:
+    """
+    Stop the current cell cleanly if the runtime does not match any of the
+    listed environments.  Call at the top of environment-specific cells.
+
+    envs: any of  'colab', 'binder', 'jupyterhub', 'local'
+
+    Example:
+        su.require_env('colab')          # skip on Binder / JupyterHub / local
+        su.require_env('binder', 'jupyterhub')
+    """
+    current = str(ENV).lower().replace(" jupyter", "")
+    if current not in {e.lower() for e in envs}:
+        label = " / ".join(e.title() for e in envs)
+        display(HTML(
+            f'<p style="color:#9ca3af;font-size:11px;margin:2px 0">'
+            f'&#9135;&nbsp;Skipped — this cell runs on {label} only '
+            f'(current environment: {ENV}).</p>'
+        ))
+        raise StopIteration
 
 
 # ── Parameter loading ────────────────────────────────────────────────────────
-
-_DRIVE_PARAMS = pathlib.Path("/content/drive/MyDrive/.suave_params.json")
-
 
 def load_params(token: str = "", host: str = "") -> dict | None:
     """
     Load SuAVE session parameters.
 
-    On Binder:  ~/suave_params.json was written by receiver.py before this
-                notebook opened — just reads the file.
-    On Colab:   checks (in order):
-                1. ~/suave_params.json — written by a previous call in this runtime.
-                2. Google Drive (MyDrive/.suave_params.json) — written by the
-                   dispatch notebook when Drive was mounted before it ran.
-    Fallback:   fetch from SuAVE session API using supplied token + host.
+    Binder / JupyterHub:
+        ~/suave_params.json was written before the notebook opened — just reads it.
+
+    Colab (in order):
+        1. ~/suave_params.json  — cached from a previous call in this runtime.
+        2. Google Drive          — written by SuAVEDispatch when Drive was mounted.
+        3. Session API           — fetched with the supplied token + host.
     """
     if PARAMS_FILE.exists():
         params = json.loads(PARAMS_FILE.read_text())
-        _persist_to_drive(params)   # write to Drive retroactively if it was just mounted
+        _persist_to_drive(params)   # retroactively save to Drive if now mounted
         return params
 
-    if in_colab() and _DRIVE_PARAMS.exists():
+    if ENV.colab and _DRIVE_PARAMS.exists():
         display(HTML('<p style="color:green">&#10003; Session parameters loaded from Google Drive.</p>'))
         params = json.loads(_DRIVE_PARAMS.read_text())
         PARAMS_FILE.write_text(json.dumps(params, indent=2))
         return params
 
-    if in_colab() and not (token and host):
+    if ENV.colab and not (token and host):
         drive_mounted = pathlib.Path('/content/drive/MyDrive').exists()
         if drive_mounted:
             msg = ('Drive is mounted but no session file was found. '
-                   'Re-run the SuAVEDispatch notebook with Drive mounted, '
-                   'then open this notebook again.')
+                   'Re-run SuAVEDispatch with Drive mounted, then open this notebook again.')
         else:
             msg = ('Google Drive is not mounted. '
                    'Mount Drive first, or enter SUAVE_TOKEN and SUAVE_HOST above and re-run.')
@@ -88,7 +129,7 @@ def load_params(token: str = "", host: str = "") -> dict | None:
 
 
 def _persist_to_drive(params: dict) -> None:
-    """Write params to Google Drive if it is already mounted. Silent on failure."""
+    """Write params to Google Drive if mounted. Silent on failure."""
     try:
         if _DRIVE_PARAMS.parent.exists():
             _DRIVE_PARAMS.write_text(json.dumps(params, indent=2))
@@ -99,12 +140,7 @@ def _persist_to_drive(params: dict) -> None:
 # ── GitHub repo config (needed to build Colab links) ────────────────────────
 
 def get_repo_config() -> dict:
-    """
-    Return {owner, repo, ref} used to construct Colab notebook URLs.
-
-    On Binder:  derived from BINDER_REPO_URL environment variable.
-    On Colab:   read from repo_config.json at the repo root.
-    """
+    """Return {owner, repo, ref} used to construct Colab notebook URLs."""
     binder_url = os.environ.get("BINDER_REPO_URL", "")
     if binder_url:
         parts = binder_url.rstrip("/").split("/")
@@ -113,7 +149,6 @@ def get_repo_config() -> dict:
             "repo":  parts[-1] if len(parts) >= 1 else "",
             "ref":   os.environ.get("BINDER_REF", "main"),
         }
-    # Walk up from helpers/ to repo root to find repo_config.json
     config_path = pathlib.Path(__file__).parent.parent / "repo_config.json"
     if config_path.exists():
         return json.loads(config_path.read_text())
@@ -123,18 +158,12 @@ def get_repo_config() -> dict:
 # ── URL generation for operation notebooks ──────────────────────────────────
 
 def make_nb_url(nb_path: str) -> str:
-    """
-    Build the URL to open an operations notebook in the current environment.
-
-    nb_path examples:
-        'operations/stats/DescriptiveStats.ipynb'
-        'operations/arithmetic/SuaveArithmetic.ipynb'
-    """
-    if in_binder() or (not in_colab() and "JUPYTERHUB_SERVICE_PREFIX" in os.environ):
+    """Build the URL to open an operation notebook in the current environment."""
+    if ENV.binder or (not ENV.colab and "JUPYTERHUB_SERVICE_PREFIX" in os.environ):
         base = os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "/")
         return f"{base}lab/tree/{nb_path}"
 
-    if in_colab():
+    if ENV.colab:
         cfg = get_repo_config()
         if cfg.get("owner") and cfg.get("repo"):
             return (
@@ -142,7 +171,6 @@ def make_nb_url(nb_path: str) -> str:
                 f"{cfg['owner']}/{cfg['repo']}/blob/{cfg['ref']}/{nb_path}"
             )
 
-    # Local JupyterLab fallback
     return f"/lab/tree/{nb_path}"
 
 
@@ -160,7 +188,7 @@ def detect_capabilities(params: dict) -> dict:
       localdzc         — NFS path to the .dzc file (empty string if unavailable)
       full_images      — NFS path to the full_images/ directory (empty if unavailable)
     """
-    import os, re
+    import re
     from urllib.parse import urlparse
 
     dzc        = params.get('dzc', '')
@@ -183,10 +211,6 @@ def detect_capabilities(params: dict) -> dict:
     except Exception:
         pass
 
-    # Full-size images require an NFS-mounted path derived from the DZC URL.
-    # Pattern: .../dzgen/lib-staging-uploads/<hash>/content.dzc
-    #          → /lib-nfs/dzgen/<hash>/content.dzc
-    #          → /lib-nfs/dzgen/<hash>/full_images/
     localdzc    = ''
     full_images = ''
     has_images  = False
@@ -213,7 +237,6 @@ def get_hf_client(token: str = ""):
     """
     Return a HuggingFace InferenceClient.
     Token priority: argument → HF_TOKEN env var → unauthenticated (rate-limited).
-    Get a free token at https://huggingface.co/settings/tokens
     """
     from huggingface_hub import InferenceClient
     tok = token or os.environ.get("HF_TOKEN", "")
@@ -248,7 +271,6 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     for col_raw, allowed in filters.get("string", {}).items():
         col = col_raw.split("#")[0]
         if col in df.columns:
-            # Multi-value columns use | separator; check for any match
             def _matches(cell):
                 vals = [v.strip() for v in str(cell).split("|")]
                 return any(v in allowed for v in vals)
@@ -286,7 +308,7 @@ def show_params(params: dict):
     ))
     token = params.get("_token", "")
     host  = params.get("_host",  "")
-    if token and host and in_colab():
+    if token and host and ENV.colab:
         drive_saved = _DRIVE_PARAMS.exists()
         drive_note  = (
             "Saved to Google Drive — operation notebooks will load automatically."
