@@ -51,7 +51,9 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         resp = requests.get(f"{host}/api/sessions/{token}", timeout=10)
         if resp.status_code == 200:
             params = resp.json()
-            # Write so that operation notebooks opened later can read it
+            # Stash credentials so show_params can display them for reuse
+            params["_token"] = token
+            params["_host"]  = host
             PARAMS_FILE.write_text(json.dumps(params, indent=2))
             return params
         raise RuntimeError(
@@ -100,6 +102,12 @@ def make_nb_url(nb_path: str) -> str:
         return f"{base}lab/tree/{nb_path}"
 
     if in_colab():
+        # If the repo is already cloned (dispatch notebook ran), open the local
+        # copy so the new notebook shares the same JupyterLab session and
+        # filesystem — ~/suave_params.json is already there, no token needed.
+        local_nb = pathlib.Path("/tmp/suave-nb") / nb_path
+        if local_nb.exists():
+            return f"/lab/tree/tmp/suave-nb/{nb_path}"
         cfg = get_repo_config()
         if cfg.get("owner") and cfg.get("repo"):
             return (
@@ -249,3 +257,17 @@ def show_params(params: dict):
         f"**Active filters:** {n_f} "
         f"({n_str} categorical, {n_num} numeric, {n_date} date)"
     ))
+    token = params.get("_token", "")
+    host  = params.get("_host",  "")
+    if token and host and in_colab():
+        display(HTML(
+            '<details style="margin-top:6px;font-size:12px">'
+            '<summary style="cursor:pointer;color:#888">Session credentials '
+            '(re-use in other notebooks if needed)</summary>'
+            f'<pre style="margin:6px 0;padding:6px;background:#f5f5f5;border-radius:4px">'
+            f'SUAVE_TOKEN = "{token}"\nSUAVE_HOST  = "{host}"</pre>'
+            '<span style="color:#888">Valid 30 min from launch. '
+            'Not needed if you open notebooks from the card links above '
+            '(they share this session).</span>'
+            '</details>'
+        ))
