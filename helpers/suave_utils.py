@@ -102,10 +102,11 @@ def load_params(token: str = "", host: str = "",
     # --- Colab: Google Drive (persisted across runtimes) ---
     if _DRIVE_PARAMS.exists():
         params = json.loads(_DRIVE_PARAMS.read_text())
-        survey = params.get('survey', '?')
-        display(HTML(
-            f'<p style="color:green">&#10003; Loaded cached session from Google Drive '
-            f'(survey: <b>{survey}</b>). To switch surveys, enter a new token below.</p>'))
+        if not _silent:
+            survey = params.get('survey', '?')
+            display(HTML(
+                f'<p style="color:green">&#10003; Loaded cached session from Google Drive '
+                f'(survey: <b>{survey}</b>). To switch surveys, enter a new token below.</p>'))
         PARAMS_FILE.write_text(json.dumps(params, indent=2))
         return params
 
