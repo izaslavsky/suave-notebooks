@@ -102,12 +102,6 @@ def make_nb_url(nb_path: str) -> str:
         return f"{base}lab/tree/{nb_path}"
 
     if in_colab():
-        # If the repo is already cloned (dispatch notebook ran), open the local
-        # copy so the new notebook shares the same JupyterLab session and
-        # filesystem — ~/suave_params.json is already there, no token needed.
-        local_nb = pathlib.Path("/tmp/suave-nb") / nb_path
-        if local_nb.exists():
-            return f"/lab/tree/tmp/suave-nb/{nb_path}"
         cfg = get_repo_config()
         if cfg.get("owner") and cfg.get("repo"):
             return (
