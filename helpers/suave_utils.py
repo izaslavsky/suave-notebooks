@@ -46,6 +46,8 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         return json.loads(PARAMS_FILE.read_text())
 
     if token and host:
+        if not host.startswith(("http://", "https://")):
+            host = "https://" + host
         resp = requests.get(f"{host}/api/sessions/{token}", timeout=10)
         if resp.status_code == 200:
             params = resp.json()
@@ -54,7 +56,7 @@ def load_params(token: str = "", host: str = "") -> dict | None:
             return params
         raise RuntimeError(
             f"SuAVE session API returned {resp.status_code}. "
-            "The token may have expired (10-minute TTL). Relaunch from SuAVE."
+            "The token may have expired (30-minute TTL). Relaunch from SuAVE."
         )
     return None
 
