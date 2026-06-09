@@ -34,15 +34,6 @@ def in_binder() -> bool:
 _DRIVE_PARAMS = pathlib.Path("/content/drive/MyDrive/.suave_params.json")
 
 
-def _colab_host_from_secrets() -> str:
-    """Return SUAVE_HOST from Colab Secrets, or '' if unavailable."""
-    try:
-        from google.colab import userdata  # type: ignore
-        return userdata.get("SUAVE_HOST") or ""
-    except Exception:
-        return ""
-
-
 def load_params(token: str = "", host: str = "") -> dict | None:
     """
     Load SuAVE session parameters.
@@ -50,32 +41,18 @@ def load_params(token: str = "", host: str = "") -> dict | None:
     On Binder:  ~/suave_params.json was written by receiver.py before this
                 notebook opened — just reads the file.
     On Colab:   checks (in order):
-                1. ~/suave_params.json — written by the dispatch notebook in
-                   the same runtime, or by a previous call in this runtime.
-                2. Google Drive (.suave_params.json in MyDrive) — written by
-                   the dispatch notebook when Drive was mounted.
-                3. SUAVE_HOST from Colab Secrets (host only; token still
-                   required from the form field).
+                1. ~/suave_params.json — written by a previous call in this runtime.
+                2. Google Drive (MyDrive/.suave_params.json) — written by the
+                   dispatch notebook when Drive was mounted before it ran.
     Fallback:   fetch from SuAVE session API using supplied token + host.
     """
     if PARAMS_FILE.exists():
         return json.loads(PARAMS_FILE.read_text())
 
-    if in_colab():
-        if _DRIVE_PARAMS.exists():
-            params = json.loads(_DRIVE_PARAMS.read_text())
-            PARAMS_FILE.write_text(json.dumps(params, indent=2))
-            return params
-        if not host:
-            host = _colab_host_from_secrets()
-
-    if host and not token:
-        display(HTML(
-            '<p style="color:#e74c3c;font-weight:bold">'
-            'Enter the session token in <code>SUAVE_TOKEN</code> above and re-run this cell.'
-            '</p>'
-        ))
-        return None
+    if in_colab() and _DRIVE_PARAMS.exists():
+        params = json.loads(_DRIVE_PARAMS.read_text())
+        PARAMS_FILE.write_text(json.dumps(params, indent=2))
+        return params
 
     if token and host:
         if not host.startswith(("http://", "https://")):
@@ -299,9 +276,9 @@ def show_params(params: dict):
         drive_note  = (
             "Saved to Google Drive — operation notebooks will load automatically."
             if drive_saved else
-            "Mount Google Drive (<code>from google.colab import drive; "
-            "drive.mount('/content/drive')</code>) before running this cell "
-            "to persist credentials across notebooks automatically."
+            "Mount Google Drive before running this cell to persist credentials "
+            "across notebooks automatically: "
+            "<code>from google.colab import drive; drive.mount('/content/drive')</code>"
         )
         display(HTML(
             '<details style="margin-top:6px;font-size:12px">'
@@ -309,8 +286,6 @@ def show_params(params: dict):
             '(needed in each operation notebook unless Drive is mounted)</summary>'
             f'<pre style="margin:6px 0;padding:6px;background:#f5f5f5;border-radius:4px">'
             f'SUAVE_TOKEN = "{token}"\nSUAVE_HOST  = "{host}"</pre>'
-            f'<span style="color:#888">{drive_note}<br>'
-            'To skip entering the host every session, save it to Colab Secrets '
-            '(key icon in the left sidebar) as <code>SUAVE_HOST</code>.</span>'
+            f'<span style="color:#888">{drive_note}</span>'
             '</details>'
         ))
