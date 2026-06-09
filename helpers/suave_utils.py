@@ -47,7 +47,9 @@ def load_params(token: str = "", host: str = "") -> dict | None:
     Fallback:   fetch from SuAVE session API using supplied token + host.
     """
     if PARAMS_FILE.exists():
-        return json.loads(PARAMS_FILE.read_text())
+        params = json.loads(PARAMS_FILE.read_text())
+        _persist_to_drive(params)   # write to Drive retroactively if it was just mounted
+        return params
 
     if in_colab() and _DRIVE_PARAMS.exists():
         display(HTML('<p style="color:green">&#10003; Session parameters loaded from Google Drive.</p>'))
@@ -56,10 +58,16 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         return params
 
     if in_colab() and not (token and host):
-        display(HTML(
-            '<p style="color:#e07000">Google Drive not mounted or no session found there. '
-            'Enter <code>SUAVE_TOKEN</code> and <code>SUAVE_HOST</code> above and re-run.</p>'
-        ))
+        drive_mounted = pathlib.Path('/content/drive/MyDrive').exists()
+        if drive_mounted:
+            msg = ('Drive is mounted but no session file was found. '
+                   'Re-run the SuAVEDispatch notebook with Drive mounted, '
+                   'then open this notebook again.')
+        else:
+            msg = ('Google Drive is not mounted. '
+                   'Enter <code>SUAVE_TOKEN</code> and <code>SUAVE_HOST</code> below and re-run, '
+                   'or mount Drive first.')
+        display(HTML(f'<p style="color:#e07000">{msg}</p>'))
         return None
 
     if token and host:
