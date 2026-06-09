@@ -62,7 +62,8 @@ def _skipped(label: str) -> None:
 
 # ── Parameter loading ────────────────────────────────────────────────────────
 
-def load_params(token: str = "", host: str = "") -> dict | None:
+def load_params(token: str = "", host: str = "",
+                _silent: bool = False) -> dict | None:
     """
     Load SuAVE session parameters.
 
@@ -73,6 +74,10 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         1. ~/suave_params.json  — cached from a previous call in this runtime.
         2. Google Drive          — written by SuAVEDispatch when Drive was mounted.
         3. Session API           — fetched with the supplied token + host.
+
+    _silent=True returns None instead of raising when Drive has no session
+    and no token/host were supplied.  Used by notebooks to probe Drive
+    without showing an error when credentials will be requested separately.
     """
     if PARAMS_FILE.exists():
         params = json.loads(PARAMS_FILE.read_text())
@@ -86,6 +91,8 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         return params
 
     if ENV.colab and not (token and host):
+        if _silent:
+            return None
         drive_mounted = pathlib.Path('/content/drive/MyDrive').exists()
         if drive_mounted:
             msg = ('Drive is mounted but no session file was found. '
