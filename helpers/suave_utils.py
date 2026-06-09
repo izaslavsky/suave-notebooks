@@ -65,10 +65,9 @@ def load_params(token: str = "", host: str = "") -> dict | None:
                    'then open this notebook again.')
         else:
             msg = ('Google Drive is not mounted. '
-                   'Enter <code>SUAVE_TOKEN</code> and <code>SUAVE_HOST</code> below and re-run, '
-                   'or mount Drive first.')
+                   'Mount Drive first, or enter SUAVE_TOKEN and SUAVE_HOST above and re-run.')
         display(HTML(f'<p style="color:#e07000">{msg}</p>'))
-        return None
+        raise RuntimeError(msg)
 
     if token and host:
         if not host.startswith(("http://", "https://")):
