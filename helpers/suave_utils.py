@@ -52,26 +52,12 @@ def in_colab()  -> bool: return ENV.colab
 def in_binder() -> bool: return ENV.binder
 
 
-def require_env(*envs: str) -> None:
-    """
-    Stop the current cell cleanly if the runtime does not match any of the
-    listed environments.  Call at the top of environment-specific cells.
-
-    envs: any of  'colab', 'binder', 'jupyterhub', 'local'
-
-    Example:
-        su.require_env('colab')          # skip on Binder / JupyterHub / local
-        su.require_env('binder', 'jupyterhub')
-    """
-    current = str(ENV).lower().replace(" jupyter", "")
-    if current not in {e.lower() for e in envs}:
-        label = " / ".join(e.title() for e in envs)
-        display(HTML(
-            f'<p style="color:#9ca3af;font-size:11px;margin:2px 0">'
-            f'&#9135;&nbsp;Skipped — this cell runs on {label} only '
-            f'(current environment: {ENV}).</p>'
-        ))
-        raise StopIteration
+def _skipped(label: str) -> None:
+    """Display a small grey 'skipped' notice."""
+    display(HTML(
+        f'<p style="color:#9ca3af;font-size:11px;margin:2px 0">'
+        f'&#9135;&nbsp;Skipped — {label} (current environment: {ENV}).</p>'
+    ))
 
 
 # ── Parameter loading ────────────────────────────────────────────────────────
