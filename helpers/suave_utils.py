@@ -69,6 +69,14 @@ def load_params(token: str = "", host: str = "") -> dict | None:
         if not host:
             host = _colab_host_from_secrets()
 
+    if host and not token:
+        display(HTML(
+            '<p style="color:#e74c3c;font-weight:bold">'
+            'Enter the session token in <code>SUAVE_TOKEN</code> above and re-run this cell.'
+            '</p>'
+        ))
+        return None
+
     if token and host:
         if not host.startswith(("http://", "https://")):
             host = "https://" + host
