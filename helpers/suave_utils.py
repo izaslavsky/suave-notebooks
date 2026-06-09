@@ -70,55 +70,78 @@ def load_params(token: str = "", host: str = "",
     Binder / JupyterHub:
         ~/suave_params.json was written before the notebook opened — just reads it.
 
-    Colab (in order):
-        1. ~/suave_params.json  — cached from a previous call in this runtime.
-        2. Google Drive          — written by SuAVEDispatch when Drive was mounted.
-        3. Session API           — fetched with the supplied token + host.
+    Colab (in priority order):
+        1. token + host  — if both are provided, ALWAYS fetch fresh from the API,
+                           overwriting any cached copy.  This ensures that opening
+                           a different survey always loads the correct dataset.
+        2. ~/suave_params.json  — runtime cache from a previous call this session.
+        3. Google Drive          — written by SuAVEDispatch when Drive was mounted.
 
-    _silent=True returns None instead of raising when Drive has no session
-    and no token/host were supplied.  Used by notebooks to probe Drive
-    without showing an error when credentials will be requested separately.
+    _silent=True returns None instead of raising when no session is found and no
+    token/host were supplied.  Used by notebooks to probe the cache without
+    showing an error when credentials will be requested separately.
     """
+    # --- token always wins: bypass every cache ---
+    if token and host:
+        return _fetch_from_api(token.strip(), host.strip())
+
+    # --- non-Colab: params file is written fresh by the platform on launch ---
+    if not ENV.colab:
+        if PARAMS_FILE.exists():
+            return json.loads(PARAMS_FILE.read_text())
+        if _silent:
+            return None
+        raise RuntimeError('No SuAVE params found. Open this notebook via SuAVE.')
+
+    # --- Colab: runtime cache (written earlier this session) ---
     if PARAMS_FILE.exists():
         params = json.loads(PARAMS_FILE.read_text())
-        _persist_to_drive(params)   # retroactively save to Drive if now mounted
+        _persist_to_drive(params)
         return params
 
-    if ENV.colab and _DRIVE_PARAMS.exists():
-        display(HTML('<p style="color:green">&#10003; Session parameters loaded from Google Drive.</p>'))
+    # --- Colab: Google Drive (persisted across runtimes) ---
+    if _DRIVE_PARAMS.exists():
         params = json.loads(_DRIVE_PARAMS.read_text())
+        survey = params.get('survey', '?')
+        display(HTML(
+            f'<p style="color:green">&#10003; Loaded cached session from Google Drive '
+            f'(survey: <b>{survey}</b>). To switch surveys, enter a new token below.</p>'))
         PARAMS_FILE.write_text(json.dumps(params, indent=2))
         return params
 
-    if ENV.colab and not (token and host):
-        if _silent:
-            return None
-        drive_mounted = pathlib.Path('/content/drive/MyDrive').exists()
-        if drive_mounted:
-            msg = ('Drive is mounted but no session file was found. '
-                   'Re-run SuAVEDispatch with Drive mounted, then open this notebook again.')
-        else:
-            msg = ('Google Drive is not mounted. '
-                   'Mount Drive first, or enter SUAVE_TOKEN and SUAVE_HOST above and re-run.')
-        display(HTML(f'<p style="color:#e07000">{msg}</p>'))
-        raise RuntimeError(msg)
+    if _silent:
+        return None
 
-    if token and host:
-        if not host.startswith(("http://", "https://")):
-            host = "https://" + host
-        resp = requests.get(f"{host}/api/sessions/{token}", timeout=10)
-        if resp.status_code == 200:
-            params = resp.json()
-            params["_token"] = token
-            params["_host"]  = host
-            PARAMS_FILE.write_text(json.dumps(params, indent=2))
-            _persist_to_drive(params)
-            return params
+    drive_mounted = pathlib.Path('/content/drive/MyDrive').exists()
+    msg = (
+        'Drive is mounted but no session file was found. '
+        'Enter SUAVE_TOKEN and SUAVE_HOST, or re-run SuAVEDispatch first.'
+        if drive_mounted else
+        'Google Drive is not mounted and no token was provided. '
+        'Mount Drive first, or enter SUAVE_TOKEN and SUAVE_HOST above and re-run.'
+    )
+    display(HTML(f'<p style="color:#e07000">{msg}</p>'))
+    raise RuntimeError(msg)
+
+
+def _fetch_from_api(token: str, host: str) -> dict:
+    """Exchange a token for session params, bypassing all caches."""
+    if not host.startswith(("http://", "https://")):
+        host = "https://" + host
+    resp = requests.get(f"{host}/api/sessions/{token}", timeout=10)
+    if resp.status_code != 200:
         raise RuntimeError(
             f"SuAVE session API returned {resp.status_code}. "
             "The token may have expired (30-minute TTL). Relaunch from SuAVE."
         )
-    return None
+    params = resp.json()
+    params["_token"] = token
+    params["_host"]  = host
+    # Overwrite both caches so subsequent notebooks in the same session
+    # pick up the new survey automatically.
+    PARAMS_FILE.write_text(json.dumps(params, indent=2))
+    _persist_to_drive(params)
+    return params
 
 
 def _persist_to_drive(params: dict) -> None:
@@ -128,6 +151,63 @@ def _persist_to_drive(params: dict) -> None:
             _DRIVE_PARAMS.write_text(json.dumps(params, indent=2))
     except Exception:
         pass
+
+
+# ── Colab credentials helper (used by operation notebooks) ──────────────────
+
+def colab_credentials(params_ref: list) -> None:
+    """
+    Interactive credential entry for Colab operation notebooks.
+
+    params_ref is a single-element list containing the current params dict
+    (or None).  Updates params_ref[0] in-place when a new token is entered.
+
+    Usage in every operation notebook credential cell:
+        _ref = [_p]
+        su.colab_credentials(_ref)
+        _p = _ref[0]
+
+    Behaviour:
+    - Always shows which survey is currently loaded so users can spot a
+      mismatch before running any analysis cells.
+    - Pressing Enter without a token keeps the existing session.
+    - Pasting a token fetches fresh params and overwrites the Drive cache,
+      so subsequent notebooks in the same session also switch surveys.
+    - Raises RuntimeError when no session exists and no token is provided.
+    """
+    if not ENV.colab:
+        _skipped('Colab only')
+        return
+
+    import getpass as _getpass
+
+    current = params_ref[0]
+    if current is not None:
+        survey = current.get('survey', '?')
+        display(HTML(
+            f'<p style="font-size:12px;margin:3px 0">Session active for survey '
+            f'<b>{survey}</b>. Press Enter to keep it, or paste a new '
+            f'SUAVE_TOKEN to switch surveys.</p>'))
+    else:
+        display(HTML(
+            '<p style="color:#e07000;font-size:12px">No session loaded. '
+            'Enter credentials from SuAVEDispatch.</p>'))
+
+    _token = _getpass.getpass('SUAVE_TOKEN (Enter to keep current): ')
+
+    if not _token.strip():
+        if current is None:
+            raise RuntimeError(
+                'No session and no token provided. '
+                'Run SuAVEDispatch first, or enter SUAVE_TOKEN above.')
+        return  # keep existing params unchanged
+
+    _host = input('SUAVE_HOST (e.g. george.tirebiter.org): ')
+    p = load_params(token=_token.strip(), host=_host.strip())
+    params_ref[0] = p
+    display(HTML(
+        f'<p style="color:green;font-size:12px">'
+        f'&#10003; Loaded survey <b>{p.get("survey", "?")}</b>.</p>'))
 
 
 # ── GitHub repo config (needed to build Colab links) ────────────────────────
