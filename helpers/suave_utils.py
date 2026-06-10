@@ -82,6 +82,11 @@ def load_params(token: str = "", host: str = "",
     showing an error when credentials will be requested separately.
     """
     # --- token always wins: bypass every cache ---
+    # Require both or neither; one without the other is always a mistake.
+    if bool(token) != bool(host):
+        missing = 'SUAVE_HOST' if token else 'SUAVE_TOKEN'
+        raise RuntimeError(
+            f'{missing} is missing. Both SUAVE_TOKEN and SUAVE_HOST are required.')
     if token and host:
         return _fetch_from_api(token.strip(), host.strip())
 
